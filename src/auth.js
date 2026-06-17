@@ -256,6 +256,7 @@ const pool = new Pool({
 const adapter = Adapter(pool);
 
 export const { auth } = CreateAuth({
+  secret: process.env.AUTH_SECRET || 'dev-secret-key-change-in-production',
   providers: [Credentials({
   id: 'credentials-signin',
   name: 'Credentials Sign in',
