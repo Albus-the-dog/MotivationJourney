@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import useUser from "@/utils/useUser";
+import { signOut } from "@auth/create/react";
 import {
   Plus,
   Target,
@@ -201,6 +202,12 @@ function Dashboard() {
             >
               <Plus size={18} />
               New Resolution
+            </button>
+            <button
+              onClick={() => signOut({ callbackUrl: "/" })}
+              className="text-sm font-medium text-gray-500 hover:text-red-600 transition-colors"
+            >
+              Sign out
             </button>
           </div>
         </div>
