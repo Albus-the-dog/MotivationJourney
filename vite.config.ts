@@ -7,6 +7,7 @@ import tsconfigPaths from 'vite-tsconfig-paths';
 import { addRenderIds } from './plugins/addRenderIds';
 import { aliases } from './plugins/aliases';
 import consoleToParent from './plugins/console-to-parent';
+import { fixWindowsRouteImports } from './plugins/fixWindowsRouteImports';
 import { layoutWrapperPlugin } from './plugins/layouts';
 import { loadFontsFromTailwindSource } from './plugins/loadFontsFromTailwindSource';
 import { nextPublicProcessEnv } from './plugins/nextPublicProcessEnv';
@@ -33,6 +34,7 @@ export default defineConfig({
   },
   logLevel: 'info',
   plugins: [
+    fixWindowsRouteImports(),
     nextPublicProcessEnv(),
     restartEnvFileChange(),
     reactRouterHonoServer({

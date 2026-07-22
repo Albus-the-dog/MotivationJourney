@@ -69,7 +69,12 @@ export async function POST(request, { params }) {
       `${process.env.NEXT_PUBLIC_CREATE_APP_URL}/integrations/google-gemini-2-5-flash/`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(process.env.ANYTHING_PROJECT_TOKEN
+            ? { Authorization: `Bearer ${process.env.ANYTHING_PROJECT_TOKEN}` }
+            : {}),
+        },
         body: JSON.stringify({
           messages: [{ role: "user", content: prompt }],
         }),

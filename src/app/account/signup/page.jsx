@@ -37,6 +37,13 @@ function SignUpPage() {
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-gray-50 p-4">
+      <a
+        href="/"
+        className="absolute top-6 left-6 flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+        Back
+      </a>
       <form
         onSubmit={onSubmit}
         className="w-full max-w-md rounded-2xl bg-white p-8 shadow-sm border border-gray-100"
@@ -48,13 +55,13 @@ function SignUpPage() {
         <div className="space-y-6">
           <div className="space-y-2">
             <label className="block text-sm font-medium text-gray-700">
-              Full Name
+              Name
             </label>
             <input
               required
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => setName(e.target.value.replace(/\s/g, ""))}
               placeholder="Your name"
               className="w-full rounded-lg border border-gray-200 px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
             />

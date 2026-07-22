@@ -21,20 +21,33 @@ function SignInPage() {
     }
 
     try {
-      await signInWithCredentials({
+      const result = await signInWithCredentials({
         email,
         password,
         callbackUrl: "/dashboard",
-        redirect: true,
+        redirect: false,
       });
+      if (result?.error) {
+        setError("Incorrect email or password. Please try again.");
+        setLoading(false);
+      } else {
+        window.location.href = "/welcome";
+      }
     } catch (err) {
-      setError(err.message || "Invalid credentials");
+      setError(err.message || "Incorrect email or password. Please try again.");
       setLoading(false);
     }
   };
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-gray-50 p-4">
+      <a
+        href="/"
+        className="absolute top-6 left-6 flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+        Back
+      </a>
       <form
         onSubmit={onSubmit}
         className="w-full max-w-md rounded-2xl bg-white p-8 shadow-sm border border-gray-100"

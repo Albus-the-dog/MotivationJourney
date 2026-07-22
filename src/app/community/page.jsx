@@ -238,6 +238,143 @@ function PhotoCard({ photo, user }) {
   );
 }
 
+function BoostModal({ resolution, onClose, user }) {
+  const queryClient = useQueryClient();
+  const [message, setMessage] = useState("");
+
+  const { data: boosts = [], isLoading: loadingBoosts } = useQuery({
+    queryKey: ["boosts", resolution.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/boosts?resolution_id=${resolution.id}`);
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+  });
+
+  const boostMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/boosts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolution_id: resolution.id, message: message.trim() }),
+      });
+      if (!res.ok) throw new Error("Failed to send boost");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["boosts", resolution.id] });
+      queryClient.invalidateQueries({ queryKey: ["community"] });
+      setMessage("");
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[85vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-indigo-50 rounded-xl flex items-center justify-center">
+              <MessageSquare size={18} className="text-indigo-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">
+                Boost {resolution.user_name?.split(" ")[0] || "them"}
+              </h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {resolution.title}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-xl">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Existing boosts */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-3 min-h-0">
+          {loadingBoosts ? (
+            <div className="flex justify-center py-6">
+              <Loader2 size={20} className="text-indigo-400 animate-spin" />
+            </div>
+          ) : boosts.length === 0 ? (
+            <div className="text-center py-8 rounded-2xl bg-gray-50 border border-dashed border-gray-200">
+              <MessageSquare size={24} className="text-gray-300 mx-auto mb-2" />
+              <p className="text-gray-400 text-sm">No boosts yet. Be the first!</p>
+            </div>
+          ) : (
+            boosts.map((b) => (
+              <div key={b.id} className="flex gap-3">
+                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs flex-shrink-0 overflow-hidden">
+                  {b.from_user_image ? (
+                    <img src={b.from_user_image} alt={b.from_user_name} className="w-full h-full object-cover" />
+                  ) : (
+                    b.from_user_name?.[0]?.toUpperCase() || "?"
+                  )}
+                </div>
+                <div className="flex-1 bg-gray-50 rounded-2xl px-4 py-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-bold text-gray-900 text-xs">{b.from_user_name || "Someone"}</span>
+                    <span className="text-[10px] text-gray-400">{format(new Date(b.created_at), "MMM d")}</span>
+                  </div>
+                  <p className="text-sm text-gray-600 leading-relaxed">{b.message}</p>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Write a boost */}
+        {user && (
+          <div className="p-6 border-t border-gray-100 flex-shrink-0">
+            <div className="flex gap-3 mb-3">
+              <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs flex-shrink-0">
+                {user?.name?.[0]?.toUpperCase() || "?"}
+              </div>
+              <textarea
+                rows={2}
+                placeholder="Write something encouraging..."
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey && message.trim()) {
+                    e.preventDefault();
+                    boostMutation.mutate();
+                  }
+                }}
+                className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 text-sm resize-none"
+              />
+            </div>
+            {boostMutation.isError && (
+              <p className="text-xs text-red-500 mb-2">Something went wrong. Try again.</p>
+            )}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => boostMutation.mutate()}
+                disabled={!message.trim() || boostMutation.isPending}
+                className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-2 rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all disabled:opacity-50"
+              >
+                {boostMutation.isPending ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Send size={14} />
+                )}
+                Send Boost
+              </button>
+              <button
+                onClick={onClose}
+                className="text-gray-500 text-sm font-medium hover:text-gray-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TeamUpModal({ resolution, onClose, user }) {
   const queryClient = useQueryClient();
   const [teamName, setTeamName] = useState(`${resolution.title} Squad`);
@@ -464,8 +601,17 @@ function TeamUpModal({ resolution, onClose, user }) {
 
 function CommunityFeed() {
   const { data: user } = useUser();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("resolutions");
-  const [teamUpResolution, setTeamUpResolution] = useState(null);
+  const [resolutionFilter, setResolutionFilter] = useState("working");
+  const [boostResolution, setBoostResolution] = useState(null);
+
+  const isCompleted = (res) => {
+    if (res.target_number && parseInt(res.target_number) > 0) {
+      return parseInt(res.total_progress) >= parseInt(res.target_number);
+    }
+    return parseInt(res.total_steps) > 0 && parseInt(res.completed_steps) >= parseInt(res.total_steps);
+  };
 
   const { data: publicResolutions = [], isLoading } = useQuery({
     queryKey: ["community"],
@@ -473,6 +619,46 @@ function CommunityFeed() {
       const response = await fetch("/api/community");
       if (!response.ok) throw new Error("Failed to fetch community data");
       return response.json();
+    },
+  });
+
+  const cheerMutation = useMutation({
+    mutationFn: async ({ resolutionId, hasCheered }) => {
+      if (hasCheered) {
+        const res = await fetch(`/api/cheers?resolution_id=${resolutionId}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("Failed to remove cheer");
+      } else {
+        const res = await fetch("/api/cheers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resolution_id: resolutionId, message: "" }),
+        });
+        if (!res.ok) throw new Error("Failed to add cheer");
+      }
+    },
+    onMutate: async ({ resolutionId, hasCheered }) => {
+      await queryClient.cancelQueries({ queryKey: ["community"] });
+      const prev = queryClient.getQueryData(["community"]);
+      queryClient.setQueryData(["community"], (old) =>
+        old?.map((r) =>
+          r.id === resolutionId
+            ? {
+                ...r,
+                cheer_count: hasCheered
+                  ? Math.max(0, parseInt(r.cheer_count) - 1)
+                  : parseInt(r.cheer_count) + 1,
+                user_cheered: !hasCheered,
+              }
+            : r
+        )
+      );
+      return { prev };
+    },
+    onError: (_err, _vars, context) => {
+      queryClient.setQueryData(["community"], context.prev);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["community"] });
     },
   });
 
@@ -485,6 +671,7 @@ function CommunityFeed() {
     },
     enabled: activeTab === "photos",
   });
+
 
   if (isLoading) {
     return (
@@ -508,12 +695,6 @@ function CommunityFeed() {
             </span>
           </div>
           <div className="flex items-center gap-4">
-            <a
-              href="/"
-              className="text-sm font-medium text-gray-600 hover:text-indigo-600 transition-colors"
-            >
-              Home
-            </a>
             {user ? (
               <a
                 href="/dashboard"
@@ -565,119 +746,161 @@ function CommunityFeed() {
         </div>
 
         {/* Resolutions Tab */}
-        {activeTab === "resolutions" && (
-          <div className="space-y-8">
-            {publicResolutions.length === 0 ? (
-              <div className="bg-white rounded-3xl border border-gray-100 p-20 text-center shadow-sm">
-                <Users size={40} className="text-gray-200 mx-auto mb-4" />
-                <p className="text-gray-500">
-                  No public resolutions to show right now.
-                </p>
-              </div>
-            ) : (
-              publicResolutions.map((res) => {
-                const progress =
-                  res.total_steps > 0
-                    ? Math.round((res.completed_steps / res.total_steps) * 100)
-                    : 0;
-                return (
-                  <div
-                    key={res.id}
-                    className="bg-white rounded-3xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow"
-                  >
-                    <div className="p-8">
-                      <div className="flex items-center gap-3 mb-6">
-                        <AvatarBubble
-                          name={res.user_name}
-                          image={res.user_image}
-                          avatar={res.user_avatar}
-                        />
-                        <div>
-                          <div className="font-bold text-gray-900">
-                            {res.user_name}
-                          </div>
-                          <div className="text-xs text-gray-400 uppercase tracking-tighter">
-                            Joined{" "}
-                            {format(new Date(res.created_at), "MMMM yyyy")}
-                          </div>
-                        </div>
-                      </div>
+        {activeTab === "resolutions" && (() => {
+          const activeResolutions = publicResolutions.filter((r) => !isCompleted(r));
+          const completedResolutions = publicResolutions.filter((r) => isCompleted(r));
+          const filtered = resolutionFilter === "working" ? activeResolutions : completedResolutions;
 
-                      <div className="mb-6">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="px-2 py-0.5 bg-gray-50 text-gray-500 rounded text-[10px] font-bold uppercase tracking-widest">
-                            {res.category || "General"}
-                          </span>
-                        </div>
-                        <h3 className="text-2xl font-bold text-gray-900 mb-3">
-                          {res.title}
-                        </h3>
-                        <p className="text-gray-600 leading-relaxed mb-6 italic">
-                          "
-                          {res.description ||
-                            "Take the first step toward your goal."}
-                          "
-                        </p>
-                      </div>
-
-                      <div className="space-y-4 pt-6 border-t border-gray-50">
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="flex items-center gap-2 font-bold text-gray-900">
-                            <TrendingUp size={16} className="text-green-500" />{" "}
-                            {progress}% Complete
-                          </div>
-                          <div className="text-gray-400 text-xs">
-                            {res.completed_steps} / {res.total_steps} Steps
-                          </div>
-                        </div>
-                        <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-indigo-600 transition-all duration-700"
-                            style={{ width: `${progress}%` }}
-                          />
-                        </div>
+          const renderCard = (res) => {
+            const hasTarget = res.target_number && parseInt(res.target_number) > 0;
+            const progress = hasTarget
+              ? Math.min(100, Math.round((parseInt(res.total_progress) / parseInt(res.target_number)) * 100))
+              : res.total_steps > 0
+                ? Math.round((res.completed_steps / res.total_steps) * 100)
+                : 0;
+            const done = isCompleted(res);
+            return (
+              <div
+                key={res.id}
+                className={`bg-white rounded-2xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow ${done ? "border-amber-200" : "border-gray-200"}`}
+              >
+                <div className="p-5">
+                  <div className="flex items-center gap-2.5 mb-4">
+                    <AvatarBubble name={res.user_name} image={res.user_image} avatar={res.user_avatar} size={8} />
+                    <div>
+                      <div className="font-bold text-gray-900 text-sm">{res.user_name}</div>
+                      <div className="text-[11px] text-gray-400">
+                        {format(new Date(res.created_at), "MMM yyyy")}
                       </div>
                     </div>
+                    {done && (
+                      <span className="ml-auto text-[11px] font-bold bg-amber-100 text-amber-700 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                        🏆 Completed
+                      </span>
+                    )}
+                  </div>
 
-                    <div className="px-8 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3">
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2 text-gray-400">
-                          <Heart
-                            size={18}
-                            className={
-                              res.cheer_count > 0
-                                ? "text-rose-500 fill-rose-500"
-                                : ""
-                            }
-                          />
-                          <span className="text-sm font-bold text-gray-600">
-                            {res.cheer_count} Cheers
-                          </span>
-                        </div>
+                  <div className="mb-4">
+                    <span className="px-2 py-0.5 bg-gray-50 text-gray-500 rounded text-[10px] font-bold uppercase tracking-widest">
+                      {res.category || "General"}
+                    </span>
+                    <h3 className="text-base font-bold text-gray-900 mt-2 mb-1">{res.title}</h3>
+                    {res.description && (
+                      <p className="text-gray-500 text-sm leading-relaxed line-clamp-2 italic">
+                        "{res.description}"
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 pt-3 border-t border-gray-50">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className={`flex items-center gap-1.5 font-bold ${done ? "text-amber-600" : "text-gray-700"}`}>
+                        <TrendingUp size={13} className={done ? "text-amber-500" : "text-green-500"} />
+                        {progress}% Complete
                       </div>
-                      <div className="flex items-center gap-3">
-                        {user && (
-                          <button
-                            onClick={() => setTeamUpResolution(res)}
-                            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700 transition-all"
-                          >
-                            <Users size={15} /> Team Up
-                          </button>
-                        )}
-                        <a
-                          href={`/resolution/${res.id}`}
-                          className="text-indigo-600 font-bold text-sm flex items-center gap-1 hover:underline"
-                        >
-                          Cheer them on <ArrowUpRight size={16} />
-                        </a>
+                      <div className="text-gray-400">
+                        {hasTarget
+                          ? `${res.total_progress} / ${res.target_number} ${res.target_unit || ""}`
+                          : `${res.completed_steps} / ${res.total_steps} steps`}
                       </div>
+                    </div>
+                    <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-700 ${done ? "bg-amber-400" : "bg-indigo-600"}`}
+                        style={{ width: `${progress}%` }}
+                      />
                     </div>
                   </div>
-                );
-              })
-            )}
-          </div>
-        )}
+                </div>
+
+                <div className={`px-5 py-3 border-t flex items-center justify-between flex-wrap gap-3 ${done ? "bg-amber-50 border-amber-100" : "bg-gray-50 border-gray-100"}`}>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        if (!user) { window.location.href = "/account/signin"; return; }
+                        cheerMutation.mutate({ resolutionId: res.id, hasCheered: res.user_cheered });
+                      }}
+                      className={`flex items-center gap-1 transition-colors group ${user ? "cursor-pointer" : "cursor-default"}`}
+                    >
+                      <Heart
+                        size={14}
+                        className={res.user_cheered ? "text-rose-500 fill-rose-500" : "text-gray-400 group-hover:text-rose-400 transition-colors"}
+                      />
+                      <span className={`text-xs font-bold ${res.user_cheered ? "text-rose-500" : "text-gray-500"}`}>
+                        {parseInt(res.cheer_count)}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!user) { window.location.href = "/account/signin"; return; }
+                        setBoostResolution(res);
+                      }}
+                      className="flex items-center gap-1 text-gray-500 hover:text-indigo-600 transition-colors group"
+                    >
+                      <MessageSquare size={14} className="group-hover:text-indigo-500 transition-colors" />
+                      <span className="text-xs font-bold">{parseInt(res.boost_count) || 0}</span>
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!user) { window.location.href = "/account/signin"; return; }
+                      setBoostResolution(res);
+                    }}
+                    className="text-indigo-600 font-bold text-xs flex items-center gap-1 hover:underline"
+                  >
+                    Boost {res.user_name?.split(" ")[0] || "them"} <ArrowUpRight size={13} />
+                  </button>
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div className="space-y-6">
+              {/* Sub-tabs */}
+              <div className="flex gap-1 bg-gray-100 p-0.5 rounded-xl w-fit">
+                <button
+                  onClick={() => setResolutionFilter("working")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${resolutionFilter === "working" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                >
+                  <TrendingUp size={12} /> Working
+                  {activeResolutions.length > 0 && (
+                    <span className="bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full font-bold text-[10px]">
+                      {activeResolutions.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setResolutionFilter("completed")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${resolutionFilter === "completed" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                >
+                  🏆 Completed
+                  {completedResolutions.length > 0 && (
+                    <span className="bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-bold text-[10px]">
+                      {completedResolutions.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Cards */}
+              {filtered.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-gray-100 p-20 text-center shadow-sm">
+                  <Users size={40} className="text-gray-200 mx-auto mb-4" />
+                  <p className="text-gray-500">
+                    {resolutionFilter === "working"
+                      ? "No working goals to show right now."
+                      : "No completed goals yet."}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  {filtered.map(renderCard)}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Photo Reports Tab */}
         {activeTab === "photos" && (
@@ -706,14 +929,15 @@ function CommunityFeed() {
         )}
       </main>
 
-      {/* Team Up Modal */}
-      {teamUpResolution && (
-        <TeamUpModal
-          resolution={teamUpResolution}
-          onClose={() => setTeamUpResolution(null)}
+      {/* Boost Modal */}
+      {boostResolution && (
+        <BoostModal
+          resolution={boostResolution}
+          onClose={() => setBoostResolution(null)}
           user={user}
         />
       )}
+
     </div>
   );
 }

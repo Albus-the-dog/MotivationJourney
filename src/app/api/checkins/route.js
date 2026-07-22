@@ -29,10 +29,10 @@ export async function GET(request) {
     }
 
     const checkins = await sql`
-      SELECT 
+      SELECT
         c.id, c.resolution_id, c.user_id, c.note, c.mood_emoji, c.created_at,
         c.progress_value, c.photo_url, c.is_public,
-        u.name as user_name, u.image as user_image, u.avatar as user_avatar
+        u.name as user_name, u.image as user_image
       FROM checkins c
       LEFT JOIN auth_users u ON u.id::text = c.user_id
       WHERE c.resolution_id = ${resolutionId}

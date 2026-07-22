@@ -54,6 +54,41 @@ export async function GET(request, { params }) {
   }
 }
 
+export async function DELETE(request, { params }) {
+  try {
+    const resolutionId = parseInt(params.id, 10);
+    if (Number.isNaN(resolutionId)) {
+      return Response.json({ error: "Invalid resolution id" }, { status: 400 });
+    }
+    const session = await auth();
+    if (!session?.user?.id) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const existing = await sql`SELECT * FROM resolutions WHERE id = ${resolutionId}`;
+    if (existing.length === 0 || String(existing[0].user_id) !== String(session.user.id)) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const ageMs = Date.now() - new Date(existing[0].created_at).getTime();
+    if (ageMs > 24 * 60 * 60 * 1000) {
+      return Response.json({ error: "Goals can only be deleted within 24 hours of creation" }, { status: 403 });
+    }
+
+    await sql`DELETE FROM cheers WHERE resolution_id = ${resolutionId}`;
+    await sql`DELETE FROM checkins WHERE resolution_id = ${resolutionId}`;
+    await sql`DELETE FROM steps WHERE resolution_id = ${resolutionId}`;
+    await sql`DELETE FROM boosts WHERE resolution_id = ${resolutionId}`;
+    await sql`DELETE FROM team_invites WHERE resolution_id = ${resolutionId}`;
+    await sql`DELETE FROM resolutions WHERE id = ${resolutionId}`;
+
+    return Response.json({ success: true });
+  } catch (error) {
+    console.error("DELETE /api/resolutions/[id] error:", error);
+    return Response.json({ error: "Internal Server Error" }, { status: 500 });
+  }
+}
+
 export async function PUT(request, { params }) {
   try {
     const resolutionId = parseInt(params.id, 10);

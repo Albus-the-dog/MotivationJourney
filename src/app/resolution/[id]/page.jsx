@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import useUser from "@/utils/useUser";
 import useUpload from "@/utils/useUpload";
 import {
-  AreaChart,
-  Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -33,10 +33,22 @@ import {
   TrendingUp,
   Camera,
   X,
+  Trash2,
+  Send,
 } from "lucide-react";
 import { format } from "date-fns";
 
 const MOOD_EMOJIS = ["😊", "💪", "😤", "😌", "🔥", "😰", "🎯", "❤️"];
+
+const COMPLETION_MESSAGES = [
+  "You actually did it. That's not luck — that's you. 🏆",
+  "Goal crushed. Come back and revisit whenever you need a reminder of what you're capable of. 🎉",
+  "100%. Not almost, not nearly — done. Be proud of this one. ✨",
+  "This is what commitment looks like. You set a goal and you finished it. 🔥",
+  "Not everyone finishes what they start. You did. Remember that. 💪",
+  "One down. Proof that you can do hard things. What's next? 🚀",
+  "You showed up every time it counted. This goal is yours forever. 🌟",
+];
 
 export default function ResolutionDetailPage({ params }) {
   const { id } = params;
@@ -53,6 +65,27 @@ export default function ResolutionDetailPage({ params }) {
   const [photoUrl, setPhotoUrl] = useState(null);
   const [photoPublic, setPhotoPublic] = useState(false);
   const [photoError, setPhotoError] = useState("");
+  const aiSectionRef = useRef(null);
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualSteps, setManualSteps] = useState([{ title: "", description: "" }]);
+  const [showEditSteps, setShowEditSteps] = useState(false);
+  const [editSteps, setEditSteps] = useState([]);
+  const [selectedUnit, setSelectedUnit] = useState(null);
+  const [pendingNote, setPendingNote] = useState("");
+  const storageKey = `ai-hint-dismissed-${id}`;
+  const [showAiHint, setShowAiHint] = useState(false);
+  const [showCompletionBanner, setShowCompletionBanner] = useState(false);
+  const [completionMessage, setCompletionMessage] = useState("");
+
+  const dismissAiHint = () => {
+    localStorage.setItem(storageKey, "1");
+    setShowAiHint(false);
+  };
+
+  const goToAi = () => {
+    dismissAiHint();
+    aiSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const {
     data: resolution,
@@ -77,6 +110,48 @@ export default function ResolutionDetailPage({ params }) {
     },
     enabled: !!id,
   });
+
+  const { data: boosts = [] } = useQuery({
+    queryKey: ["boosts", id],
+    queryFn: async () => {
+      const response = await fetch(`/api/boosts?resolution_id=${id}`);
+      if (!response.ok) throw new Error("Failed to fetch boosts");
+      return response.json();
+    },
+    enabled: !!id,
+  });
+
+  useEffect(() => {
+    if (!resolution) return;
+    const tSteps = resolution.steps?.length || 0;
+    const cSteps = resolution.steps?.filter((s) => s.is_completed).length || 0;
+    const hasTN = !!(resolution.target_number && resolution.target_number > 0);
+    const tProg = parseInt(resolution.total_progress) || 0;
+    const tNum = parseInt(resolution.target_number) || 0;
+    const prog = hasTN
+      ? Math.min(100, Math.round((tProg / tNum) * 100))
+      : tSteps > 0 ? Math.round((cSteps / tSteps) * 100) : 0;
+
+    if (prog === 100) {
+      const msg = COMPLETION_MESSAGES[Math.floor(Math.random() * COMPLETION_MESSAGES.length)];
+      setCompletionMessage(msg);
+      setShowCompletionBanner(true);
+    } else if (!localStorage.getItem(storageKey)) {
+      setShowAiHint(true);
+    }
+  }, [storageKey, resolution?.id]);
+
+  useEffect(() => {
+    if (!resolution?.created_at) return;
+    const remaining = 24 * 60 * 60 * 1000 - (Date.now() - new Date(resolution.created_at).getTime());
+    if (remaining <= 0) {
+      setIsWithin24Hours(false);
+      return;
+    }
+    setIsWithin24Hours(true);
+    const timer = setTimeout(() => setIsWithin24Hours(false), remaining);
+    return () => clearTimeout(timer);
+  }, [resolution?.created_at]);
 
   const toggleStepMutation = useMutation({
     mutationFn: async ({ stepId, isCompleted }) => {
@@ -135,6 +210,26 @@ export default function ResolutionDetailPage({ params }) {
     },
   });
 
+  const saveStepsMutation = useMutation({
+    mutationFn: async (steps) => {
+      const response = await fetch("/api/steps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolution_id: id, steps }),
+      });
+      if (!response.ok) throw new Error("Failed to save steps");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["resolution", id] });
+      setShowManualForm(false);
+      setManualSteps([{ title: "", description: "" }]);
+      setShowEditSteps(false);
+      setEditSteps([]);
+    },
+    onError: () => alert("Failed to save steps. Please try again."),
+  });
+
   const sendCheerMutation = useMutation({
     mutationFn: async (message) => {
       const response = await fetch("/api/cheers", {
@@ -182,6 +277,45 @@ export default function ResolutionDetailPage({ params }) {
       setPhotoUrl(null);
       setPhotoPublic(false);
       setPhotoError("");
+    },
+    onError: (err) => {
+      alert("Failed to save progress: " + (err.message || "Unknown error"));
+    },
+  });
+
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isWithin24Hours, setIsWithin24Hours] = useState(false);
+  const [editingCheckinId, setEditingCheckinId] = useState(null);
+  const [editingCheckinNote, setEditingCheckinNote] = useState("");
+
+  const updateCheckinMutation = useMutation({
+    mutationFn: async ({ checkinId, note }) => {
+      const response = await fetch(`/api/checkins/${checkinId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note }),
+      });
+      if (!response.ok) throw new Error("Failed to update note");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["checkins", id] });
+      setEditingCheckinId(null);
+      setEditingCheckinNote("");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`/api/resolutions/${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to delete");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      window.location.href = "/dashboard";
     },
   });
 
@@ -244,20 +378,30 @@ export default function ResolutionDetailPage({ params }) {
       ? Math.round((completedSteps / totalSteps) * 100)
       : 0;
 
+
   const sortedCheckins = [...checkins].sort(
     (a, b) => new Date(a.created_at) - new Date(b.created_at),
   );
-  let cumulative = 0;
-  const chartData = sortedCheckins
+
+  // Map checkin id → which unit it represents (1-based, among progress entries sorted by date)
+  const progressCheckinIds = sortedCheckins
+    .filter((c) => c.progress_value > 0)
+    .map((c) => c.id);
+  const checkinUnitMap = Object.fromEntries(
+    progressCheckinIds.map((cid, i) => [cid, i + 1])
+  );
+  const byDay = new Map();
+  sortedCheckins
     .filter((c) => (hasTargetNumber ? c.progress_value > 0 : true))
-    .map((c) => {
-      cumulative += hasTargetNumber ? c.progress_value || 1 : 1;
-      return {
-        date: format(new Date(c.created_at), "MMM d"),
-        progress: cumulative,
-        fullDate: format(new Date(c.created_at), "MMM d, yyyy"),
-      };
+    .forEach((c) => {
+      const day = format(new Date(c.created_at), "MMM d");
+      const val = hasTargetNumber ? c.progress_value || 1 : 1;
+      byDay.set(day, (byDay.get(day) || 0) + val);
     });
+  const chartData = Array.from(byDay.entries()).map(([date, progress]) => ({
+    date,
+    progress,
+  }));
 
   const visibleCheckins = showAllCheckins ? checkins : checkins.slice(0, 3);
 
@@ -269,8 +413,51 @@ export default function ResolutionDetailPage({ params }) {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
+      {/* ── Completion Banner (fixed top, priority over AI hint) ── */}
+      {showCompletionBanner && (
+        <div className="fixed top-0 left-0 right-0 z-[60] bg-amber-500 text-white px-4 py-3 flex items-center justify-between gap-4 shadow-lg">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <span className="text-xl shrink-0">🏆</span>
+            <p className="text-sm font-semibold truncate">{completionMessage}</p>
+          </div>
+          <button
+            onClick={() => setShowCompletionBanner(false)}
+            className="shrink-0 text-white/80 hover:text-white transition-colors p-1.5 hover:bg-amber-400 rounded-lg"
+            aria-label="Dismiss"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {/* ── AI Hint Banner (fixed top) ── */}
+      {showAiHint && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-indigo-600 text-white px-4 py-3 flex items-center justify-between gap-4 shadow-lg">
+          <div className="flex items-center gap-3 min-w-0">
+            <Sparkles size={18} className="flex-shrink-0" />
+            <span className="text-sm font-medium truncate">
+              Let AI build your 6-step action plan for this goal!
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={goToAi}
+              className="bg-white text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-50 transition-all"
+            >
+              Take me there
+            </button>
+            <button
+              onClick={dismissAiHint}
+              className="p-1.5 hover:bg-indigo-500 rounded-lg transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Navigation */}
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-10">
+      <nav className={`bg-white border-b border-gray-100 sticky z-10 ${(showAiHint || showCompletionBanner) ? "top-12" : "top-0"}`}>
         <div className="max-w-4xl mx-auto px-6 h-16 flex items-center gap-4">
           <a
             href="/dashboard"
@@ -342,7 +529,7 @@ export default function ResolutionDetailPage({ params }) {
                 {resolution.title}
               </h1>
               <p className="text-gray-600 text-lg leading-relaxed">
-                {resolution.description || "No description provided."}
+                {resolution.description}
               </p>
             </div>
 
@@ -390,104 +577,95 @@ export default function ResolutionDetailPage({ params }) {
                 <BookOpen size={14} />
                 {checkins.length} log{checkins.length !== 1 ? "s" : ""}
               </div>
+              {resolution.cheers?.length > 0 && (
+                <div className="flex items-center gap-1 text-rose-400 font-semibold">
+                  ❤️ {resolution.cheers.length} cheer{resolution.cheers.length !== 1 ? "s" : ""}
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Delete button — only within 24 hours of creation */}
+          {isOwner && isWithin24Hours && (
+            <div className="pt-5 mt-5 border-t border-gray-100">
+              {showDeleteConfirm ? (
+                <div className="flex items-center gap-3">
+                  <p className="text-sm text-gray-500 flex-1">Are you sure? This cannot be undone.</p>
+                  <button
+                    onClick={() => deleteMutation.mutate()}
+                    disabled={deleteMutation.isPending}
+                    className="flex items-center gap-1.5 bg-red-500 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-red-600 transition-all disabled:opacity-50"
+                  >
+                    {deleteMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    Yes, delete
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="px-4 py-2 rounded-xl text-sm font-bold border border-gray-200 text-gray-500 hover:bg-gray-50 transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="flex items-center gap-2 text-red-400 hover:text-red-600 text-sm font-semibold transition-colors"
+                >
+                  <Trash2 size={15} />
+                  Delete this goal
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* ── COMMUNITY CHEERS (right under hero) ── */}
-        {resolution.is_public && (
+        {/* ── BOOSTS ── */}
+        {(boosts.length > 0 || (resolution.is_public && !isOwner)) && (
           <div className="bg-white rounded-3xl p-8 border border-gray-200 shadow-sm">
             <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-              <Heart size={22} className="text-rose-500" />
-              Community Cheers
-              {resolution.cheers?.length > 0 && (
-                <span className="ml-1 text-sm font-semibold text-rose-400 bg-rose-50 px-2.5 py-0.5 rounded-full">
-                  {resolution.cheers.length}
+              <Send size={20} className="text-indigo-500" />
+              Boosts
+              {boosts.length > 0 && (
+                <span className="ml-1 text-sm font-semibold text-indigo-400 bg-indigo-50 px-2.5 py-0.5 rounded-full">
+                  {boosts.length}
                 </span>
               )}
             </h2>
 
-            {/* Cheer list */}
-            <div className="space-y-4 mb-6">
-              {!resolution.cheers || resolution.cheers.length === 0 ? (
-                <div className="text-center py-8 rounded-2xl bg-gray-50 border border-dashed border-gray-200">
-                  <MessageSquare
-                    size={28}
-                    className="text-gray-300 mx-auto mb-2"
-                  />
-                  <p className="text-gray-400 text-sm">
-                    No cheers yet. Be the first to encourage!
-                  </p>
-                </div>
-              ) : (
-                resolution.cheers.map((cheer) => (
+            {boosts.length === 0 ? (
+              <div className="text-center py-8 rounded-2xl bg-gray-50 border border-dashed border-gray-200">
+                <Send size={28} className="text-gray-300 mx-auto mb-2" />
+                <p className="text-gray-400 text-sm">No boosts yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {boosts.map((boost) => (
                   <div
-                    key={cheer.id}
-                    className="flex gap-3 p-4 rounded-2xl bg-gray-50 border border-gray-100"
+                    key={boost.id}
+                    className="flex gap-3 p-4 rounded-2xl bg-indigo-50/40 border border-indigo-100"
                   >
                     <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm border-2 border-white shadow-sm flex-shrink-0 overflow-hidden">
-                      {cheer.from_user_image ? (
-                        <img
-                          src={cheer.from_user_image}
-                          alt={cheer.from_user_name}
-                          className="w-full h-full object-cover"
-                        />
+                      {boost.from_user_image ? (
+                        <img src={boost.from_user_image} alt={boost.from_user_name} className="w-full h-full object-cover" />
                       ) : (
-                        cheer.from_user_name?.[0]?.toUpperCase() || "?"
+                        boost.from_user_name?.[0]?.toUpperCase() || "?"
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-bold text-gray-900 text-sm">
-                          {cheer.from_user_name}
+                          {boost.from_user_name || "Someone"}
                         </span>
                         <span className="text-[11px] text-gray-400">
-                          {format(new Date(cheer.created_at), "MMM d")}
+                          {format(new Date(boost.created_at), "MMM d")}
                         </span>
                       </div>
                       <p className="text-gray-600 text-sm leading-relaxed">
-                        {cheer.message}
+                        {boost.message}
                       </p>
                     </div>
                   </div>
-                ))
-              )}
-            </div>
-
-            {/* Send cheer input */}
-            {user && (
-              <div className="flex gap-3">
-                <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm flex-shrink-0">
-                  {user.name?.[0]?.toUpperCase() || "?"}
-                </div>
-                <div className="flex-1 flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Send some encouragement..."
-                    className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 text-sm"
-                    value={cheerMessage}
-                    onChange={(e) => setCheerMessage(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && cheerMessage.trim()) {
-                        sendCheerMutation.mutate(cheerMessage);
-                      }
-                    }}
-                  />
-                  <button
-                    onClick={() => sendCheerMutation.mutate(cheerMessage)}
-                    disabled={
-                      !cheerMessage.trim() || sendCheerMutation.isPending
-                    }
-                    className="bg-rose-500 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-rose-600 transition-all disabled:opacity-50 flex items-center gap-1.5"
-                  >
-                    {sendCheerMutation.isPending ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Heart size={14} />
-                    )}
-                    Cheer
-                  </button>
-                </div>
+                ))}
               </div>
             )}
           </div>
@@ -529,28 +707,28 @@ export default function ResolutionDetailPage({ params }) {
                     {Array.from({ length: targetNumber }).map((_, i) => {
                       const unitNum = i + 1;
                       const isDone = unitNum <= totalProgress;
+                      const isPending = selectedUnit === unitNum;
                       return (
                         <button
                           key={i}
                           disabled={isDone || addCheckinMutation.isPending}
-                          onClick={() =>
-                            addCheckinMutation.mutate({
-                              note: `Completed ${targetUnit.replace(/s$/, "")} ${unitNum} of ${targetNumber}`,
-                              mood_emoji: "✅",
-                              progress_value: 1,
-                            })
-                          }
+                          onClick={() => {
+                            if (isDone) return;
+                            setSelectedUnit(isPending ? null : unitNum);
+                            setPendingNote("");
+                          }}
                           className={`flex flex-col items-center gap-1 px-4 py-3 rounded-2xl border-2 transition-all font-bold text-sm ${
                             isDone
                               ? "border-purple-200 bg-purple-50 text-purple-600 cursor-default"
-                              : "border-gray-200 bg-white text-gray-400 hover:border-purple-300 hover:text-purple-500 hover:bg-purple-50"
+                              : isPending
+                                ? "border-purple-500 bg-purple-50 text-purple-600"
+                                : "border-gray-200 bg-white text-gray-400 hover:border-purple-300 hover:text-purple-500 hover:bg-purple-50"
                           }`}
                         >
                           {isDone ? (
-                            <CheckCircle2
-                              size={28}
-                              className="text-purple-500"
-                            />
+                            <CheckCircle2 size={28} className="text-purple-500" />
+                          ) : isPending ? (
+                            <CheckCircle2 size={28} className="text-purple-400" />
                           ) : (
                             <Circle size={28} />
                           )}
@@ -561,12 +739,66 @@ export default function ResolutionDetailPage({ params }) {
                       );
                     })}
                   </div>
+
+                  {/* Inline note for selected box */}
+                  {selectedUnit !== null && (
+                    <div className="mt-5 p-4 bg-purple-50 rounded-2xl border border-purple-100 space-y-3">
+                      <p className="text-sm font-semibold text-purple-700">
+                        {targetUnit.replace(/s$/, "")} {selectedUnit} — add a note (optional)
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          autoFocus
+                          type="text"
+                          placeholder="How did it go? Any thoughts..."
+                          className="flex-1 rounded-xl border border-purple-200 bg-white px-4 py-2.5 outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400 text-sm"
+                          value={pendingNote}
+                          onChange={(e) => setPendingNote(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              addCheckinMutation.mutate({
+                                note: pendingNote,
+                                mood_emoji: "✅",
+                                progress_value: 1,
+                              });
+                              setSelectedUnit(null);
+                              setPendingNote("");
+                            }
+                            if (e.key === "Escape") {
+                              setSelectedUnit(null);
+                              setPendingNote("");
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={() => {
+                            addCheckinMutation.mutate({
+                              note: pendingNote,
+                              mood_emoji: "✅",
+                              progress_value: 1,
+                            });
+                            setSelectedUnit(null);
+                            setPendingNote("");
+                          }}
+                          disabled={addCheckinMutation.isPending}
+                          className="bg-purple-600 text-white px-4 py-2.5 rounded-xl font-bold text-sm hover:bg-purple-700 transition-all disabled:opacity-50"
+                        >
+                          {addCheckinMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : "Save"}
+                        </button>
+                        <button
+                          onClick={() => { setSelectedUnit(null); setPendingNote(""); }}
+                          className="px-3 py-2.5 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all text-sm"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {totalProgress > 0 && (
                     <p className="text-sm text-purple-600 font-bold mt-5">
                       🎯 {totalProgress} of {targetNumber} {targetUnit} done!
-                      {totalProgress >= targetNumber
-                        ? " 🎉 Goal achieved!"
-                        : ""}
+                      {totalProgress >= targetNumber ? " 🎉 Goal achieved!" : ""}
                     </p>
                   )}
                 </div>
@@ -765,55 +997,8 @@ export default function ResolutionDetailPage({ params }) {
                 </div>
               )}
 
-              {/* ── Notes for target-number goals ── */}
-              {hasTargetNumber && (
-                <div className="bg-white rounded-3xl p-8 border border-gray-200 shadow-sm">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <PenLine size={20} className="text-purple-600" />
-                    Add a Note
-                  </h3>
-                  <div className="flex gap-3">
-                    <input
-                      type="text"
-                      placeholder="How did it go? Any thoughts..."
-                      className="flex-1 rounded-xl border border-gray-200 px-4 py-3 outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400 text-sm"
-                      value={checkinNote}
-                      onChange={(e) => setCheckinNote(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && checkinNote.trim()) {
-                          addCheckinMutation.mutate({
-                            note: checkinNote,
-                            mood_emoji: "",
-                            progress_value: 0,
-                          });
-                        }
-                      }}
-                    />
-                    <button
-                      onClick={() =>
-                        addCheckinMutation.mutate({
-                          note: checkinNote,
-                          mood_emoji: "",
-                          progress_value: 0,
-                        })
-                      }
-                      disabled={
-                        addCheckinMutation.isPending || !checkinNote.trim()
-                      }
-                      className="bg-purple-600 text-white px-5 py-3 rounded-xl font-bold text-sm hover:bg-purple-700 transition-all disabled:opacity-50"
-                    >
-                      {addCheckinMutation.isPending ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        "Add"
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
               {/* ── AI Action Plan ── */}
-              <div className="bg-white rounded-3xl p-8 border border-gray-200 shadow-sm">
+              <div ref={aiSectionRef} className="bg-white rounded-3xl p-8 border border-gray-200 shadow-sm">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                     <Sparkles size={20} className="text-indigo-600" />
@@ -821,18 +1006,27 @@ export default function ResolutionDetailPage({ params }) {
                   </h3>
                   {totalSteps === 0 && (
                     <div className="flex flex-col items-end gap-1.5">
-                      <button
-                        onClick={() => generateStepsMutation.mutate()}
-                        disabled={isGenerating}
-                        className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-indigo-700 transition-all shadow-sm disabled:opacity-50"
-                      >
-                        {isGenerating ? (
-                          <Loader2 size={15} className="animate-spin" />
-                        ) : (
-                          <Sparkles size={15} />
-                        )}
-                        {isGenerating ? "Generating..." : "Generate Steps"}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setShowManualForm((v) => !v)}
+                          className="border border-gray-200 text-gray-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-gray-50 transition-all"
+                        >
+                          <PenLine size={15} />
+                          Create My Own
+                        </button>
+                        <button
+                          onClick={() => generateStepsMutation.mutate()}
+                          disabled={isGenerating}
+                          className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-indigo-700 transition-all shadow-sm disabled:opacity-50"
+                        >
+                          {isGenerating ? (
+                            <Loader2 size={15} className="animate-spin" />
+                          ) : (
+                            <Sparkles size={15} />
+                          )}
+                          {isGenerating ? "Generating..." : "Generate Steps"}
+                        </button>
+                      </div>
                       {generateError && (
                         <p className="text-xs text-red-500 font-medium">
                           {generateError}
@@ -842,7 +1036,74 @@ export default function ResolutionDetailPage({ params }) {
                   )}
                 </div>
 
-                {totalSteps === 0 ? (
+                {/* Manual step creation form */}
+                {showManualForm && totalSteps === 0 && (
+                  <div className="mb-6 space-y-3">
+                    {manualSteps.map((step, i) => (
+                      <div key={i} className="rounded-2xl border border-gray-200 p-4 space-y-2">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-xs font-bold flex items-center justify-center flex-shrink-0">
+                            {i + 1}
+                          </span>
+                          <input
+                            type="text"
+                            placeholder={`Step ${i + 1} title`}
+                            value={step.title}
+                            onChange={(e) => {
+                              const updated = [...manualSteps];
+                              updated[i] = { ...updated[i], title: e.target.value };
+                              setManualSteps(updated);
+                            }}
+                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+                          />
+                          {manualSteps.length > 1 && (
+                            <button
+                              onClick={() => setManualSteps(manualSteps.filter((_, idx) => idx !== i))}
+                              className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
+                        </div>
+                        <textarea
+                          rows={2}
+                          placeholder="Description (optional)"
+                          value={step.description}
+                          onChange={(e) => {
+                            const updated = [...manualSteps];
+                            updated[i] = { ...updated[i], description: e.target.value };
+                            setManualSteps(updated);
+                          }}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 resize-none"
+                        />
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => setManualSteps([...manualSteps, { title: "", description: "" }])}
+                      className="w-full border-2 border-dashed border-gray-200 rounded-2xl py-3 text-sm font-bold text-gray-400 hover:border-indigo-300 hover:text-indigo-500 transition-all"
+                    >
+                      + Add Step
+                    </button>
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        onClick={() => saveStepsMutation.mutate(manualSteps.filter((s) => s.title.trim()))}
+                        disabled={saveStepsMutation.isPending || manualSteps.every((s) => !s.title.trim())}
+                        className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {saveStepsMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : null}
+                        Save Steps
+                      </button>
+                      <button
+                        onClick={() => { setShowManualForm(false); setManualSteps([{ title: "", description: "" }]); }}
+                        className="text-gray-500 text-sm font-medium hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {totalSteps === 0 && !showManualForm ? (
                   <div className="bg-indigo-50/50 border-2 border-dashed border-indigo-100 rounded-2xl p-10 text-center">
                     <Sparkles
                       size={36}
@@ -852,11 +1113,10 @@ export default function ResolutionDetailPage({ params }) {
                       No plan yet
                     </h4>
                     <p className="text-gray-500 text-sm">
-                      Click "Generate Steps" above for a tailored 6-step AI
-                      action plan.
+                      Generate AI steps or create your own above.
                     </p>
                   </div>
-                ) : (
+                ) : totalSteps > 0 ? (
                   <div className="space-y-4">
                     {resolution.steps.map((step, index) => (
                       <div
@@ -911,8 +1171,84 @@ export default function ResolutionDetailPage({ params }) {
                         </div>
                       </div>
                     ))}
+
+                    {/* Edit steps form */}
+                    {showEditSteps ? (
+                      <div className="pt-2 space-y-3">
+                        {editSteps.map((step, i) => (
+                          <div key={i} className="rounded-2xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-xs font-bold flex items-center justify-center flex-shrink-0">
+                                {i + 1}
+                              </span>
+                              <input
+                                type="text"
+                                value={step.title}
+                                onChange={(e) => {
+                                  const updated = [...editSteps];
+                                  updated[i] = { ...updated[i], title: e.target.value };
+                                  setEditSteps(updated);
+                                }}
+                                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 bg-white"
+                              />
+                              {editSteps.length > 1 && (
+                                <button
+                                  onClick={() => setEditSteps(editSteps.filter((_, idx) => idx !== i))}
+                                  className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
+                                >
+                                  <X size={14} />
+                                </button>
+                              )}
+                            </div>
+                            <textarea
+                              rows={2}
+                              value={step.description}
+                              onChange={(e) => {
+                                const updated = [...editSteps];
+                                updated[i] = { ...updated[i], description: e.target.value };
+                                setEditSteps(updated);
+                              }}
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 resize-none bg-white"
+                            />
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => setEditSteps([...editSteps, { title: "", description: "" }])}
+                          className="w-full border-2 border-dashed border-gray-200 rounded-2xl py-3 text-sm font-bold text-gray-400 hover:border-indigo-300 hover:text-indigo-500 transition-all"
+                        >
+                          + Add Step
+                        </button>
+                        <div className="flex items-center gap-3 pt-1">
+                          <button
+                            onClick={() => saveStepsMutation.mutate(editSteps.filter((s) => s.title.trim()))}
+                            disabled={saveStepsMutation.isPending || editSteps.every((s) => !s.title.trim())}
+                            className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center gap-2"
+                          >
+                            {saveStepsMutation.isPending && <Loader2 size={14} className="animate-spin" />}
+                            Save Changes
+                          </button>
+                          <button
+                            onClick={() => setShowEditSteps(false)}
+                            className="text-gray-500 text-sm font-medium hover:text-gray-700"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setEditSteps(resolution.steps.map((s) => ({ title: s.title, description: s.description || "" })));
+                          setShowEditSteps(true);
+                        }}
+                        className="w-full text-gray-400 text-xs font-bold py-2 hover:text-indigo-500 transition-colors flex items-center justify-center gap-1.5 border border-dashed border-gray-200 rounded-xl hover:border-indigo-300"
+                      >
+                        <PenLine size={13} />
+                        Edit Steps
+                      </button>
+                    )}
                   </div>
-                )}
+                ) : null}
               </div>
 
               {/* ── Progress Chart & Log ── */}
@@ -927,38 +1263,19 @@ export default function ResolutionDetailPage({ params }) {
                   <div className="mb-8">
                     <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wider">
                       {hasTargetNumber
-                        ? `Cumulative (Goal: ${targetNumber} ${targetUnit})`
-                        : "Days You Made Progress"}
+                        ? `Per Entry (Goal: ${targetNumber} ${targetUnit})`
+                        : "Each Log Entry"}
                     </p>
                     <div style={{ height: 200 }}>
                       <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart
+                        <LineChart
                           data={chartData}
                           margin={{ top: 8, right: 8, left: -20, bottom: 0 }}
                         >
-                          <defs>
-                            <linearGradient
-                              id="progressGrad"
-                              x1="0"
-                              y1="0"
-                              x2="0"
-                              y2="1"
-                            >
-                              <stop
-                                offset="5%"
-                                stopColor="#7c3aed"
-                                stopOpacity={0.18}
-                              />
-                              <stop
-                                offset="95%"
-                                stopColor="#7c3aed"
-                                stopOpacity={0}
-                              />
-                            </linearGradient>
-                          </defs>
                           <CartesianGrid
                             strokeDasharray="3 3"
                             stroke="#f0f0f0"
+                            vertical={false}
                           />
                           <XAxis
                             dataKey="date"
@@ -971,6 +1288,7 @@ export default function ResolutionDetailPage({ params }) {
                             axisLine={false}
                             tickLine={false}
                             allowDecimals={false}
+                            width={30}
                           />
                           <Tooltip
                             contentStyle={{
@@ -980,11 +1298,8 @@ export default function ResolutionDetailPage({ params }) {
                             }}
                             formatter={(v) => [
                               v,
-                              hasTargetNumber ? targetUnit : "days logged",
+                              hasTargetNumber ? targetUnit : "logged",
                             ]}
-                            labelFormatter={(label, payload) =>
-                              payload?.[0]?.payload?.fullDate || label
-                            }
                           />
                           {hasTargetNumber && (
                             <ReferenceLine
@@ -999,16 +1314,15 @@ export default function ResolutionDetailPage({ params }) {
                               }}
                             />
                           )}
-                          <Area
+                          <Line
                             type="monotone"
                             dataKey="progress"
                             stroke="#7c3aed"
                             strokeWidth={2.5}
-                            fill="url(#progressGrad)"
                             dot={{ fill: "#7c3aed", r: 4 }}
                             activeDot={{ r: 6 }}
                           />
-                        </AreaChart>
+                        </LineChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
@@ -1069,24 +1383,70 @@ export default function ResolutionDetailPage({ params }) {
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
+                          {/* Header row: timestamp + completion label */}
                           <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <span className="text-xs font-bold text-gray-400">
-                              {format(
-                                new Date(checkin.created_at),
-                                "MMM d, yyyy · h:mm a",
-                              )}
+                              {format(new Date(checkin.created_at), "MMM d, yyyy · h:mm a")}
                             </span>
-                            {checkin.progress_value > 0 && hasTargetNumber && (
+                            {checkin.progress_value > 0 && hasTargetNumber && checkinUnitMap[checkin.id] && (
                               <span className="text-[10px] bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full font-bold">
-                                +{checkin.progress_value}{" "}
-                                {targetUnit.replace(/s$/, "")}
+                                ✅ {targetUnit.replace(/s$/, "")} {checkinUnitMap[checkin.id]} of {targetNumber}
+                              </span>
+                            )}
+                            {checkin.progress_value > 0 && !hasTargetNumber && (
+                              <span className="text-[10px] bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full font-bold">
+                                +1 logged
                               </span>
                             )}
                           </div>
-                          {checkin.note && (
-                            <p className="text-gray-700 text-sm leading-relaxed">
-                              {checkin.note}
-                            </p>
+
+                          {/* Note row — editable, always shown for progress entries */}
+                          {isOwner && (checkin.progress_value > 0 ? hasTargetNumber : true) && (
+                            editingCheckinId === checkin.id ? (
+                              <div className="mt-1.5 flex gap-2">
+                                <input
+                                  autoFocus
+                                  type="text"
+                                  value={editingCheckinNote}
+                                  placeholder="Add a note..."
+                                  onChange={(e) => setEditingCheckinNote(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") updateCheckinMutation.mutate({ checkinId: checkin.id, note: editingCheckinNote });
+                                    if (e.key === "Escape") { setEditingCheckinId(null); setEditingCheckinNote(""); }
+                                  }}
+                                  className="flex-1 rounded-lg border border-purple-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400"
+                                />
+                                <button
+                                  onClick={() => updateCheckinMutation.mutate({ checkinId: checkin.id, note: editingCheckinNote })}
+                                  disabled={updateCheckinMutation.isPending}
+                                  className="bg-purple-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-purple-700 transition-all disabled:opacity-50"
+                                >
+                                  {updateCheckinMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : "Save"}
+                                </button>
+                                <button
+                                  onClick={() => { setEditingCheckinId(null); setEditingCheckinNote(""); }}
+                                  className="text-gray-400 hover:text-gray-600 px-2 rounded-lg hover:bg-gray-100 transition-all"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div
+                                className="mt-1 flex items-center gap-1.5 group/note cursor-pointer"
+                                onClick={() => { setEditingCheckinId(checkin.id); setEditingCheckinNote(checkin.note || ""); }}
+                              >
+                                {checkin.note ? (
+                                  <p className="text-gray-700 text-sm leading-relaxed">{checkin.note}</p>
+                                ) : (
+                                  <p className="text-gray-300 text-sm italic">Add a note...</p>
+                                )}
+                                <PenLine size={12} className="text-gray-200 group-hover/note:text-purple-400 transition-colors flex-shrink-0" />
+                              </div>
+                            )
+                          )}
+                          {/* Non-owner: just show the note */}
+                          {!isOwner && checkin.note && (
+                            <p className="text-gray-700 text-sm leading-relaxed mt-1">{checkin.note}</p>
                           )}
                           {checkin.photo_url && (
                             <div className="mt-2 rounded-xl overflow-hidden border border-gray-200">

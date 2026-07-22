@@ -447,7 +447,7 @@ export function Layout({ children }: { children: ReactNode }) {
       </head>
       <body>
         <ClientOnly loader={() => children} />
-        <Toaster position={isMobile ? 'top-center' : 'bottom-right'} />
+        <Toaster position={isMobile ? 'top-center' : 'top-right'} />
         <ScrollRestoration />
         <Scripts />
         <link rel="preconnect" href="https://ka-p.fontawesome.com" crossOrigin="anonymous" />

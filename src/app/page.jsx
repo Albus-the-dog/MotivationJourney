@@ -17,31 +17,12 @@ function LandingPage() {
           </span>
         </div>
         <div className="flex items-center gap-4">
-          {loading ? (
-            <div className="w-20 h-8 bg-gray-100 animate-pulse rounded-lg"></div>
-          ) : user ? (
-            <a
-              href="/dashboard"
-              className="bg-indigo-600 text-white px-5 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors"
-            >
-              Dashboard
-            </a>
-          ) : (
-            <>
-              <a
-                href="/account/signin"
-                className="text-gray-600 font-medium hover:text-gray-900"
-              >
-                Sign In
-              </a>
-              <a
-                href="/account/signup"
-                className="bg-indigo-600 text-white px-5 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors"
-              >
-                Get Started
-              </a>
-            </>
-          )}
+          <a
+            href={user ? "/welcome" : "/account/signin"}
+            className="bg-indigo-600 text-white px-5 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+          >
+            Sign in
+          </a>
         </div>
       </nav>
 
